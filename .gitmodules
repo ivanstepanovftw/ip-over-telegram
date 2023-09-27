@@ -1,0 +1,9 @@
+[submodule "td"]
+	path = td
+	url = git@github.com:tdlib/td.git
+[submodule "telegram-bot-api"]
+	path = telegram-bot-api
+	url = git@github.com:tdlib/telegram-bot-api.git
+[submodule "libtuntap"]
+	path = libtuntap
+	url = git@github.com:ivanstepanovftw/libtuntap.git
