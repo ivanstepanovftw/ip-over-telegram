@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
+import asyncio
+import datetime
 import signal
+import socket
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pytdbot import Client, utils
@@ -9,10 +13,18 @@ import base64
 import yaml
 import argparse
 import os
-
-sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'libtuntap', 'install', 'lib'))
-import pytuntap
+import lz4.frame
+import logging
+import select
+import socket
+import struct
+from socketserver import ThreadingMixIn, TCPServer, StreamRequestHandler
+from libtuntap.install.lib import pytuntap
 print(f"tuntap v{pytuntap.tuntap_version()}")
+
+
+MTU = 1500
+SOCKS_VERSION = 5
 
 
 @dataclass
@@ -24,9 +36,17 @@ class Config:
         api_id: int
         api_hash: str
         database_encryption_key: str
+
+    @dataclass
+    class TUNConfig:
+        ip: str
+        name: str
+
     tdconfig: TDConfig
+    tun: TUNConfig
+    wrap_in_proxy: bool
     receive_from_user_id: int
-    send_to_user_id: int
+    send_to_chat_id: int
 
     @staticmethod
     def from_yaml(path):
@@ -44,7 +64,9 @@ class Config:
         return self
 
 
-def main() -> None:
+async def async_main():
+    # logging.basicConfig(level=logging.DEBUG)
+
     parser = argparse.ArgumentParser(description="TDLib example")
     parser.add_argument("config", type=str, help="Path to config file")
     args = parser.parse_args()
@@ -56,53 +78,70 @@ def main() -> None:
         lib_path="./td/install/lib/libtdjson.so",  # Path to TDjson shared library
         td_log=LogStreamFile("tdlib.log"),  # Set TDLib log file path
         td_verbosity=2,  # TDLib verbosity level
+        loop=asyncio.get_event_loop(),  # asyncio loop to use
         **config.tdconfig
     )
 
     # Add TUN device
     tun_device = pytuntap.Tun()
-    tun_device.name = "telegram_tun0"
-    tun_device.mtu = 1500
+    print(123, config.tun)
+    tun_device.name = config.tun["name"]
+    tun_device.mtu = MTU
     tun_device.up()
-    tun_device.ip("10.0.0.1", 24)
+    tun_device.ip(config.tun["ip"], 24)
     tun_device.nonblocking(True)
     tun_fd = tun_device.native_handle
 
-    @tc.on_updateMessageSendSucceeded()
-    async def delete_message(c: Client, update: Update):
-        await c.deleteMessages(update.chat_id, [update.message_id], True)
-
     stats = {
+        "idle": 0,
+        "read": 0,
         "sent": 0,
         "received": 0,
+        "write": 0,
+        "notfound": 0,
+        "error": 0,
     }
+
+    # c_context = lz4.frame.create_compression_context()
+    # d_context = lz4.frame.create_decompression_context()
 
     @tc.on_updateNewMessage()
     async def receive_message(c: Client, message: Update):
+        # print(f'Received message: {message}')
+        stats["received"] += 1
+
         if message.from_id != config.receive_from_user_id:
             return
 
-        if not message.text:
+        packet = message.text
+        if not packet:
             return
-
-        if not message.text.startswith("#iot "):
+        if not packet.startswith("#iot "):
             return
-
-        # send_text = lambda text: c.sendTextMessage(message.chat_id, text)
-        # reply_text = lambda text: c.sendTextMessage(message.chat_id, text, reply_to_message_id=message.reply_to_message_id)
-        # edit_text = lambda text: message.editMessageText(message.chat_id, message.id, text)
-        # await reply_text("Hello, world!")
-
-        # packet = message.text[5:].encode('utf-8')
-        packet = base64.b64decode(message.text[5:].encode('utf-8'))
-        print(f"Received packet: {packet}")
+        packet = packet[5:]
+        # packet = base_gram.decode(packet)
+        packet = base64.b64decode(packet)
+        # packet, b, e = lz4.frame.decompress_chunk(d_context, packet)
+        # print(f"Received packet ({len(packet)} bytes): {packet}")
         os.write(tun_fd, packet)
-        stats["received"] += 1
+        stats["write"] += 1
+        # await c.deleteMessages(message.chat_id, [message.message_id], True)
+        # stats["delete"] += 1
 
     @tc.on_updateAuthorizationState()
     async def auth(c: Client, update: Update):
+        # print(f'Authorization state: {update["authorization_state"]}')
         if update["authorization_state"]["@type"] == "authorizationStateReady":
-            print(f"Ready! My ID is {(await c.getMe())['id']}")
+            me = await c.getMe()
+            print(f'Ready! My ID is {me["id"]}. Sending welcome message to {config.send_to_chat_id}...')
+            result = await c.sendTextMessage(config.send_to_chat_id, f'Ready! Current time is {datetime.datetime.now()}, host is {socket.gethostname()}')
+            print(result)
+
+            # for i, chunk in enumerate(chunked_chars):
+            #     result = await c.sendTextMessage(me["id"], f'{debug_chars_prefix} {i:05} {chunk}')
+            #     print(i, result['content']['text']['text'], chunk)
+            #     # exit()
+
 
     # Run the client
     # tc.run()
@@ -110,22 +149,100 @@ def main() -> None:
     async def loop():
         while tc.is_running:
             try:
-                packet = os.read(tun_fd, 1500)
-                # await tc.sendTextMessage(config.send_to_user_id, f"#iot {packet.decode('utf-8')}")
-                await tc.sendTextMessage(config.send_to_user_id, f"#iot {base64.b64encode(packet).decode('utf-8')}")
-                stats["sent"] += 1
-                print(f"Stats: {stats}")
+                # await asyncio.sleep(1)
+                # continue
+                #
+                # packet = f'#count {stats["idle"]}'
+                # result = await tc.sendTextMessage(config.send_to_chat_id, packet)
+                # if result["@type"] != "error":
+                #     stats["sent"] += 1
+                # else:
+                #     print(result)
+                # await asyncio.sleep(1)
+                # continue
+
+
+                packet = os.read(tun_fd, MTU)
+                stats["read"] += 1
+                # print(f"Sending packet ({len(packet)} bytes): {packet}")
+                # packet = lz4.frame.compress_begin(c_context) + packet + lz4.frame.compress_flush(c_context)
+                # print(f"After compression: {len(packet)} bytes")
+                # packet = base_gram.encode(packet)
+                packet = base64.b64encode(packet).decode('utf-8')
+                # print(f"After encoding: {len(packet)} bytes")
+                packet = f"#iot {packet}"
+                result = await tc.sendTextMessage(config.send_to_chat_id, packet)
+                if result["@type"] != "error":
+                    stats["sent"] += 1
+                else:
+                    stats.setdefault(result["code"], 0)
+                    stats[result["code"]] += 1
+
+                # async def send_packet():
+                #     result = await tc.sendTextMessage(config.send_to_chat_id, packet)
+                #     if result["@type"] != "error":
+                #         stats["sent"] += 1
+                # tc.loop.create_task(send_packet())
             except BlockingIOError:
                 pass
             except Exception as e:
+                stats["error"] += 1
                 print(e)
                 break
+            finally:
+                await asyncio.sleep(0)
+                stats["idle"] += 1
+        print("Stopped!")
 
-    tc._register_signal_handlers()
-    tc.loop.run_until_complete(tc.start(login=True))
+    async def statistics():
+        while tc.is_running:
+            print(f'Statistics: {stats}')
+            await asyncio.sleep(2)
+
+    print("Starting...")
+    await tc.start(login=False)
+
+    # # TODO: not working before login
+    # print("Getting proxies...")
+    # proxies = await tc.getProxies()
+    # print(f'Proxies: {proxies}')
+    # for proxy in proxies["proxies"]:
+    #     await tc.removeProxy(proxy["id"])
+    #
+    # if config.wrap_in_proxy:
+    #     print("Using proxy...")
+    #     await tc.addProxy("127.0.0.1", 4090, True, type={
+    #         "@type": "proxyTypeSocks5",
+    #         # "username": "username",
+    #         # "password": "password",
+    #     })
+
+    async def add_proxy():
+        proxies = await tc.getProxies()
+        print(f'Proxies: {proxies}')
+        for proxy in proxies["proxies"]:
+            await tc.removeProxy(proxy["id"])
+
+        print("Proxies removed!")
+
+        # if config.wrap_in_proxy:
+        #     await tc.addProxy("127.0.0.1", 4090, True, type={
+        #         "@type": "proxyTypeSocks5",
+        #         # "username": "username",
+        #         # "password": "password",
+        #     })
+
+    tc.loop.create_task(add_proxy())
+
+    print("Logging in...")
+    await tc.login()
+
+    print("Starting statistics...")
+    asyncio.create_task(statistics())
+
     print("Started!")
-    tc.loop.run_until_complete(loop())
+    await loop()
 
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(async_main())
