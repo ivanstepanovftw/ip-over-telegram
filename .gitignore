@@ -1,4 +1,2 @@
-/tdlib/
-/cmake-build*/
-config.client.default.yaml
-config.server.default.yaml
+/.td*/
+/*build*/

@@ -1,3 +1,6 @@
+"""
+SOCKET5 proxy server
+"""
 import logging
 import select
 import socket

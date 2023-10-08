@@ -17,99 +17,64 @@
   python3 -m pip install -r requirements.txt
   ```
 
-4. Create config file
-  Example of `/config.yaml`:
+4. Create config files
+  Example of `/config.client.yaml` (change `tdconfig.token` to your phone number):
   ```yaml
   tdconfig:
-    files_directory: ".td.db"    
+    files_directory: ".td"
     token: "+15555555555"
     api_id: 94575
     api_hash: "a3406de8d171bb422bb6ddf3bbd800e2"
     database_encryption_key: "1234echobot$"
-  
+  tun:
+    name: "telegram_tun0"
+    mtu: 1500
+    ip: "10.0.0.2"
+
+  cache_size: 1
+  cache_flush_rate: 10
+  #cache_size: 0
+  #cache_flush_rate: 0
+
+  wrap_in_proxy: false
   receive_from_user_id: 829534074
   send_to_chat_id: 829534074
   ```
 
+  Copy config to `config.server.yaml`, but change TUN's device IP to `ip: "10.0.0.1"` for your internal server TUN device IP. Then rsync config to the server.
+  ```shell
+   rsync -avz -e ssh config.server.yaml user@company420:/p/ip_over_telegram
+  ```
+
 ### Run
 
-0. You should have root permissions in order to run this program
+0. You should have root permissions in order to run this program.
 1. On the server:
   ```shell
+  sudo sysctl -w net.ipv4.ip_forward=1
+  sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+  sudo iptables --policy FORWARD ACCEPT
   sudo modprobe tun
-  sudo python3 main.py config.yaml
+  sudo python3 main.py config.server.yaml
   ```
 2. On the client:
   ```shell
   sudo modprobe tun
-  sudo python3 main.py config.yaml
+  sudo python3 main.py config.client.yaml
   ```
-3. Setup routes
+3. Setup routes (on the client):
   ```shell
-  # Add a route for the TUN device
-  ip route add 10.0.0.0/24 dev telegram_tun0
-  
-  # Redirect all traffic through the TUN device
-  ip route change default via 10.0.0.1
-  ```
+  TELEGRAM_IP_ADDRESSES=(149.154.167.41 149.154.167.51 95.161.76.100)
+  DEFAULT_GATEWAY=$(ip route | grep default | awk '{print $3 " dev " $5}')
 
+  # Add Telegram IP addresses to the exception for your default gateway
+  for ip in $TELEGRAM_IP_ADDRESSES; do sudo ip route add $ip via $DEFAULT_GATEWAY; done
+  
+  # Make IP over Telegram as default gateway
+  sudo ip route change default via 10.0.0.1 dev telegram_tun0
+  ```
 4. **Enjoy!**
 5. Stop
   ```shell
-  ip route change default via eth0
-  or
-  ip route change default via wlp1s0
+  sudo ip route change default via $DEFAULT_GATEWAY
   ```
-
-
-
----
-Server preparation:
-```shell
-echo 1 > /proc/sys/net/ipv4/ip_forward
-iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
-iptables --policy FORWARD ACCEPT
-```
-```console
-$ curl ifconfig.me
-188.119.45.172%
-$ ip route show dev telegram_tun0
-10.0.0.0/24 proto kernel scope link src 10.0.0.1 
-$ sudo iptables -t nat -A OUTPUT -p tcp --dport 4090 -j DNAT --to-destination 172.16.0.1
-$ sudo iptables -t nat -L -n -v --line-numbers
-...
-Chain OUTPUT (policy ACCEPT 0 packets, 0 bytes)
-num   pkts bytes target     prot opt in     out     source               destination         
-1       10  1770 DOCKER     all  --  *      *       0.0.0.0/0           !127.0.0.0/8          ADDRTYPE match dst-type LOCAL
-2        0     0 DNAT       tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:4090 to:172.16.0.1
-...
-$ # To remove: sudo iptables -t nat -D OUTPUT 2
-$ sudo ip route
-default via 172.16.0.1 dev wlp1s0 proto dhcp src 172.16.0.80 metric 600 
-10.0.0.0/24 dev telegram_tun0 proto kernel scope link src 10.0.0.1 
-10.0.85.2 dev outline-tun0 scope link src 10.0.85.1 linkdown 
-172.16.0.0/24 dev wlp1s0 proto kernel scope link src 172.16.0.80 metric 600 
-172.17.0.0/16 dev docker0 proto kernel scope link src 172.17.0.1 
-$ sudo ip route del default via 172.16.0.1 dev wlp1s0
-$ sudo ip route add default via 10.0.0.1 dev telegram_tun0
-$ sudo ip route
-
-
-$ sudo ip route add default via 10.0.0.1
-$ sudo ip route change default via 172.16.0.1
-```
-
-
-```console
-$ TELEGRAM_IP=149.154.167.41
-$ curl ifconfig.me
-188.119.45.172%
-$ ip route show dev telegram_tun0
-10.0.0.0/24 proto kernel scope link src 10.0.0.1 
-
-
-sudo ip route change default via 10.0.0.1 dev telegram_tun0
-sudo ip route add 149.154.167.41 via 172.16.0.1 dev wlp1s0
-
-sudo ip route del default via 10.0.0.1 dev telegram_tun0
-```
