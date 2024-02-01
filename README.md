@@ -1,7 +1,11 @@
-# ip_over_telegram
+# IP over Telegram
+
+This is a simple program that allows you to create a connection to the Internet through Telegram servers, effectively abusing unlimited traffic provided by mobile operators.
 
 ## Building
+
 1. Install prerequisites
+
   **Alpine Linux**:
   ```shell
   sudo apk install gcc g++ cmake ninja gperf python3 python3-dev openssl-dev
