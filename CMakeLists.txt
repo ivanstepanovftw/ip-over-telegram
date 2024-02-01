@@ -33,6 +33,6 @@ target_link_libraries(IPOverTelegram PUBLIC
 
 # add address sanitizers and ub sanitizers
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_compile_options(IPOverTelegram PRIVATE -fsanitize=address -fsanitize=undefined -g)
-    target_link_options(IPOverTelegram PRIVATE -fsanitize=address -fsanitize=undefined)
+    target_compile_options(IPOverTelegram PRIVATE -fsanitize=address -fsanitize=undefined -fno-sanitize=vptr)
+    target_link_options(IPOverTelegram PRIVATE -fsanitize=address -fsanitize=undefined -fno-sanitize=vptr)
 endif ()
