@@ -1,6 +1,6 @@
 # IP over Telegram
 
-This is a simple program that allows you to create a connection to the Internet through Telegram servers, effectively abusing unlimited traffic provided by mobile operators.
+This is a simple program that allows you to create a connection to the Internet through Telegram servers, taking advantage of the unlimited data offerings from mobile carriers.
 
 ## Building
 
